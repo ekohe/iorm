@@ -18,6 +18,7 @@
 @property (nonatomic, strong) NSString *id;
 
 + (AFHTTPClient*)sharedClient;
++ (void) setAuthorizationToken:(NSString*)authorizationToken;
 
 // Class methods
 +(void) all:(void (^)(NSArray* objects))success failure:(void (^)(NSError* error))failure;

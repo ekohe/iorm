@@ -22,7 +22,8 @@ static NSString *baseUrl = @"http://localhost:3000";
 static NSString *baseUrl = BASE_URL;
 #endif
 
-static NSString *UserAgent = nil;
+static NSString *userAgent = nil;
+static NSString *authorizationToken = nil;
 
 @interface Model (PrivateMethods)
 +(NSString*) pluralizedName;
@@ -53,9 +54,7 @@ static NSString *UserAgent = nil;
         [_sharedClient setDefaultHeader:@"Accept" value:@"application/json"];
         [_sharedClient setDefaultHeader:@"User-Agent" value:[self userAgent]];
         [_sharedClient registerHTTPOperationClass:[AFJSONRequestOperation class]];
-        //if ([CurrentUser oauthToken]) {
-        //    [_sharedClient setAuthorizationHeaderWithToken:[CurrentUser oauthToken]];
-        //}
+        [_sharedClient setAuthorizationHeaderWithToken:authorizationToken];
     });
     
     return _sharedClient;
@@ -63,15 +62,20 @@ static NSString *UserAgent = nil;
 
 + (NSString *)userAgent
 {
-    if (UserAgent == nil) {
+    if (userAgent == nil) {
         NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
         NSString *version = [info objectForKey:@"CFBundleShortVersionString"];
         NSString *bundleName = [info objectForKey:@"CFBundleName"];
-        UserAgent = [NSString stringWithFormat:@"%@/%@", bundleName, version];
+        userAgent = [NSString stringWithFormat:@"%@/%@", bundleName, version];
     }
     
-    return UserAgent;
+    return userAgent;
 }
+
++ (void) setAuthorizationToken:(NSString*)_authorizationToken {
+    authorizationToken = _authorizationToken;
+}
+
 
 +(void) all:(void (^)(NSArray* objects))success failure:(void (^)(NSError* error))failure {
     [self allWithParameters:nil success:success failure:failure];
