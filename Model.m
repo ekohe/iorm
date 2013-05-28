@@ -1,291 +1,549 @@
 //
 //  Model.m
+//  iORM
 //
-//  Created by Pawel Maverick Stoklosa III on 10/14/10.
-//  Copyright 2010 ekohe. All rights reserved.
+//  Created by Maxime Guilbot on 7/12/12.
+//  Copyright (c) 2012 Ekohe. All rights reserved.
 //
 
 #import "Model.h"
-#import "Authorization.h"
+#import "objc/runtime.h"
+#import "AFHTTPRequestOperation.h"
+#import "AFJSONRequestOperation.h"
+#import "NSString+Inflections.h"
+#import "NSDate+JSONString.h"
 
-static WebServiceRequest *allRequest;
-static WebServiceRequest *firstRequest;
-static id<ModelDelegate> allDelegate;
-static id<ModelDelegate> firstDelegate;
+#define DEBUG_MODEL
+#define DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
+
+#ifndef BASE_URL
+static NSString *baseUrl = @"http://localhost:3000";
+#else
+static NSString *baseUrl = BASE_URL;
+#endif
+
+static NSString *UserAgent = nil;
 
 @interface Model (PrivateMethods)
-+(NSString*) getCompletePath:(NSNumber*)objectId;
++(NSString*) pluralizedName;
++(NSString*) singularName;
++(NSArray*) fields;
+
++(NSString*) indexPath;
++(NSString*) createPath;
+-(NSString*) fetchManyRelationPath:(NSString*)relation;
++(Class) classForManyRelation:(NSString*)relation;
 @end
 
 @implementation Model
 
-@synthesize detailsRequest, objectId, gotDetailsDelegate, refreshRequest, refreshDelegate;
-
-#pragma mark -
-#pragma mark Methods to be overriden
-
-// to be overriden
--(id) initWithJson:(NSDictionary*)json {
-	if ((self = [super init])) {
-		[self updateModelWithJson:json];
-#ifdef DEBUG_MODEL_OBJECTS_CREATIONS
-		NSLog(@"%@ object created from json data: %@", [self class], json);
-#endif
-	}
+-(id) init {
+    self = [super init];
+    if (self) {
+        _id = nil;
+    }
     return self;
 }
 
-// to be overriden
-+(NSString*) getPath {
-    NSLog(@"[Model] !! path not defined. Declare the method +(NSString*) getPath to set the path to your resource.");
-    return @"/";
-}
-
--(void) addDetailsWithJson:(NSDictionary*)json {
-	[self updateModelWithJson:json];
-}
-
-// to be overidden
--(void) updateModelWithJson:(NSDictionary*)json {
-	NSLog(@"[Model] updateModelWithJson: method not overriden. JSON data not being saved: %@", json);
-}
-
-#pragma mark -
-#pragma mark Finders
-
-+(void)getAllFromPath:(NSString*)path delegate:(id)delegate {
-	[self getAllFromPath:path delegate:delegate withHud:YES];
-}
-
-+(void)getAllFromPath:(NSString*)path delegate:(id)delegate withHud:(BOOL)displayHud {
-    [self cancelAll]; // Cancel current all request if it happens
-    WebServiceRequest *request = [[WebServiceRequest alloc] initGetWithPath:path delegate:self];
-    allRequest = [request retain];
-    [request release];
++ (AFHTTPClient*)sharedClient {
+    static id _sharedClient = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        _sharedClient = [[AFHTTPClient alloc] initWithBaseURL:[NSURL URLWithString:baseUrl]];
+        [_sharedClient setDefaultHeader:@"Accept" value:@"application/json"];
+        [_sharedClient setDefaultHeader:@"User-Agent" value:[self userAgent]];
+        [_sharedClient registerHTTPOperationClass:[AFJSONRequestOperation class]];
+        //if ([CurrentUser oauthToken]) {
+        //    [_sharedClient setAuthorizationHeaderWithToken:[CurrentUser oauthToken]];
+        //}
+    });
     
-    allDelegate = delegate;
+    return _sharedClient;
 }
 
-+(void)getAllFromPath:(NSString*)path withParameters:(NSDictionary*)params delegate:(id)delegate {
-	[self getAllFromPath:path withParameters:params delegate:delegate withHud:YES];
-}
-
-+(void)getAllFromPath:(NSString*)path withParameters:(NSDictionary*)params delegate:(id)delegate withHud:(BOOL)displayHud {
-    NSMutableArray *paramsTokens = [[NSMutableArray alloc] init];
-    
-    for (NSString *key in [params allKeys]) {
-        [paramsTokens addObject:[NSString stringWithFormat:@"%@=%@",
-                                 [key stringByUrlEncoding],
-                                 [[params valueForKey:key] stringByUrlEncoding]]];
++ (NSString *)userAgent
+{
+    if (UserAgent == nil) {
+        NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
+        NSString *version = [info objectForKey:@"CFBundleShortVersionString"];
+        NSString *bundleName = [info objectForKey:@"CFBundleName"];
+        UserAgent = [NSString stringWithFormat:@"%@/%@", bundleName, version];
     }
     
-    NSString *paramsAsString = [paramsTokens componentsJoinedByString:@"&"];
-    [paramsTokens release];
-	
-    NSString *completePath = [NSString stringWithFormat:@"%@?%@", path, paramsAsString];
+    return UserAgent;
+}
+
++(void) all:(void (^)(NSArray* objects))success failure:(void (^)(NSError* error))failure {
+    [self allWithParameters:nil success:success failure:failure];
+}
+
+
++(void) allWithParameters:(NSDictionary*)parameters success:(void (^)(NSArray* objects))success failure:(void (^)(NSError* error))failure {
+    [[self sharedClient] getPath:[self indexPath]
+                      parameters:parameters
+                         success:^(AFHTTPRequestOperation *operation, id responseObject) {
+                             if ([responseObject isKindOfClass:[NSArray class]]) {
+                                 NSArray *objectsAttributes = (NSArray*)responseObject;
+                                 NSMutableArray *objects = [NSMutableArray array];
+                                 
+                                 for (NSDictionary *attributes in objectsAttributes) {
+                                     Model *object = [[self alloc] init];
+                                     [object updateAttributes:attributes];
+                                     [objects addObject:object];
+                                 }
+                                 
+                                 success(objects);
+                             }
+
+                         }
+                         failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+                             failure(error);
+                         }];
+}
+
+-(void) create:(void (^)(void))success failure:(void (^)(void))failure {
+    [self postTo:[[self class] createPath] success:success failure:failure];
+}
+
+-(void) postTo:(NSString*)path success:(void (^)(void))success failure:(void (^)(void))failure {
+    NSDictionary *_attributes = [NSDictionary dictionaryWithObject:[self attributes] forKey:[[self class] singularName]];
+    [self postTo:path attributes:_attributes success:success failure:failure];
+}
+
+-(void) postTo:(NSString*)path attributes:(NSDictionary*)_attributes success:(void (^)(void))success failure:(void (^)(void))failure {
+#ifdef DEBUG_MODEL
+    NSLog(@"[%@] > POST to path %@ with attributes: %@", [[self class] description], path, _attributes);
+#endif
+    [[[self class] sharedClient] postPath:path
+                               parameters:_attributes
+                                  success:^(AFHTTPRequestOperation *operation, id responseObject) {
+#ifdef DEBUG_MODEL
+                                      NSLog(@"[%@] < POST response: %@", [[self class] description], responseObject);
+#endif
+                                      if ([responseObject isKindOfClass:[NSDictionary class]]) {
+                                          [self updateAttributes:(NSDictionary*)responseObject];
+                                      }
+                                      
+                                      success();
+                                  }
+                                  failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+#ifdef DEBUG_MODEL
+                                      NSLog(@"[%@] < POST Failure status code %d, response: %@", [[self class] description], [operation.response statusCode], operation.responseString);
+#endif
+                                      // Unprocessable Entity - The object has validation errors
+                                      if ([operation.response statusCode]==422) {
+                                          if ([operation isKindOfClass:[AFJSONRequestOperation class]]) {
+                                              AFJSONRequestOperation *jsonOperation = (AFJSONRequestOperation*)operation;
+                                              NSDictionary *errorResponse = jsonOperation.responseJSON;
+                                              if ([errorResponse isKindOfClass:[NSDictionary class]]) {
+                                                  errors = [errorResponse valueForKey:@"errors"];
+                                              }
+                                          }
+                                      }
+                                      failure();
+                                  }];
     
-    [self getAllFromPath:completePath delegate:delegate withHud:displayHud];
 }
 
-+(void)getAllWithParameters:(NSDictionary*)params delegate:(id)delegate {
-	[self getAllFromPath:[self getCompletePath:nil] withParameters:params delegate:delegate];
-}
-
-+(void)getAllWithParameters:(NSDictionary*)params delegate:(id)delegate withHud:(BOOL)displayHud {
-	[self getAllFromPath:[self getCompletePath:nil] withParameters:params delegate:delegate withHud:displayHud];
-}
-
-+(void)getAllWithDelegate:(id)delegate withHud:(BOOL)displayHud {
-    [self getAllFromPath:[self getCompletePath:nil] delegate:delegate withHud:displayHud];
-}
-
-+(void)getAllWithDelegate:(id<ModelDelegate>)delegate {
-    [self getAllFromPath:[self getCompletePath:nil] delegate:delegate];
-}
-
-+(void)cancelAll {
-    if (allRequest!=nil) {
-        allRequest.delegate = nil;
-        [allRequest release], allRequest = nil;
-    }
-    allDelegate = nil;
-}
-
-#pragma mark -
-#pragma mark First
-
-+(void)firstWithId:(int)objectId withDelegate:(id)delegate {
-	[self firstWithPath:[self getCompletePath:[NSNumber numberWithInt:objectId]] withDelegate:delegate];
-}
-
-+(void)firstWithPath:(NSString*)path withDelegate:(id)delegate {
-	  WebServiceRequest *request = [[WebServiceRequest alloc] initGetWithPath:path delegate:self];
-    firstRequest = [request retain];
-    [request release];
+-(void) save:(void (^)(void))success failure:(void (^)(NSError* error))failure {
+    NSMutableDictionary *_rawAttributes = [NSMutableDictionary dictionaryWithDictionary:[self attributes]];
     
-    firstDelegate = delegate;    	
+    // id is a protected attribute
+    [_rawAttributes removeObjectForKey:@"id"];
+    
+    NSDictionary *_attributes = [NSDictionary dictionaryWithObject:_rawAttributes forKey:[[self class] singularName]];
+    
+#ifdef DEBUG_MODEL
+    NSLog(@"[%@] > PUT to path %@ with attributes: %@", [[self class] description], [self path], _attributes);
+#endif
+    
+    [[[self class] sharedClient] putPath:[self path]
+                              parameters:_attributes
+                                 success:^(AFHTTPRequestOperation *operation, id responseObject) {
+#ifdef DEBUG_MODEL
+                                      NSLog(@"[%@] < PUT response: %@", [[self class] description], responseObject);
+#endif
+                                      if ([responseObject isKindOfClass:[NSDictionary class]]) {
+                                          [self updateAttributes:(NSDictionary*)responseObject];
+                                      }
+                                      
+                                      success();
+                                  }
+                                 failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+#ifdef DEBUG_MODEL
+                                      NSLog(@"[%@] < PUT Failure status code %d, response: %@", [[self class] description], [operation.response statusCode], operation.responseString);
+#endif
+                                      // Unprocessable Entity - The object has validation errors
+                                      // TODO: factor this case
+                                      if ([operation.response statusCode]==422) {
+                                          if ([operation isKindOfClass:[AFJSONRequestOperation class]]) {
+                                              AFJSONRequestOperation *jsonOperation = (AFJSONRequestOperation*)operation;
+                                              NSDictionary *errorResponse = jsonOperation.responseJSON;
+                                              if ([errorResponse isKindOfClass:[NSDictionary class]]) {
+                                                  errors = [errorResponse valueForKey:@"errors"];
+                                              }
+                                          }
+                                      }
+                                      failure(error);
+                                  }];
+
 }
 
-+(void)cancelFirst {
-    if (firstRequest!=nil) {
-        firstRequest.delegate = nil;
-        [firstRequest release], firstRequest = nil;
+-(void) destroy:(void (^)(void))success failure:(void (^)(NSError* error))failure {
+#ifdef DEBUG_MODEL
+    NSLog(@"[%@] > DELETE to path %@", [[self class] description], [self path]);
+#endif
+    
+    [[[self class] sharedClient] deletePath:[self path]
+                              parameters:nil
+                                 success:^(AFHTTPRequestOperation *operation, id responseObject) {
+#ifdef DEBUG_MODEL
+                                     NSLog(@"[%@] < DELETE response: %@", [[self class] description], responseObject);
+#endif
+                                     
+                                     success();
+                                 }
+                                 failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+#ifdef DEBUG_MODEL
+                                     NSLog(@"[%@] < DELETE Failure status code %d, response: %@", [[self class] description], [operation.response statusCode], operation.responseString);
+#endif
+                                     failure(error);
+                                 }];
+}
+
+-(void) fetchMany:(NSString*)relation success:(void (^)(void))success failure:(void (^)(NSError* error))failure {
+    if (![self persistent]) { failure(nil); return;}  // TODO: create a NSError object
+    
+    [[[self class] sharedClient] getPath:[self fetchManyRelationPath:relation]
+                      parameters:nil
+                         success:^(AFHTTPRequestOperation *operation, id responseObject) {
+                             if ([responseObject isKindOfClass:[NSArray class]]) {
+                                 NSArray *objectsAttributes = (NSArray*)responseObject;
+                                 NSMutableArray *objects = [NSMutableArray array];
+                                 
+                                 Class relationKlass = [[self class] classForManyRelation:relation];
+                                 for (NSDictionary *attributes in objectsAttributes) {
+                                     if (relationKlass==nil) {
+                                         NSLog(@"Can't find class for relation %@", relation);
+                                     } else {
+                                         Model *object = [[relationKlass alloc] init];
+                                         [object updateAttributes:attributes];
+                                         [objects addObject:object];
+                                     }
+                                 }
+                                 
+                                 [self setValue:objects forKey:relation];
+                                 success();
+                             } else {
+                                 failure(nil); // TODO: create a NSError object
+                             }
+                         }
+                         failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+                             failure(error);
+                         }];
+
+}
+
+-(void) push:(Model*)object to:(NSString*)relation success:(void (^)(void))success failure:(void (^)(NSError* error))failure {
+    
+    NSDictionary *_attributes = [NSDictionary dictionaryWithObject:[object attributes] forKey:[[object class] singularName]];
+
+    if (![self persistent]) { failure(nil); return;} // Should return an NSError object as well
+
+#ifdef DEBUG_MODEL
+    NSLog(@"[%@] > POST to path %@ with attributes: %@", [[self class] description], [self path], _attributes);
+#endif
+    
+    NSMutableArray *relationArray = [self valueForKey:relation];
+    if (relationArray==nil) {
+        relationArray = [NSMutableArray arrayWithCapacity:1];
+        [self setValue:relationArray forKey:relation];
     }
-    firstDelegate = nil;
-}
-
-
-+(id<ModelDelegate>)firstDelegate {
-	return firstDelegate;
-}
-
-+(void)setFirstDelegate:(id<ModelDelegate>)newFirstDelegate {
-	firstDelegate = newFirstDelegate;
-}
-
-+(id<ModelDelegate>)allDelegate {
-	return allDelegate;
-}
-
-+(void)setAllDelegate:(id<ModelDelegate>)newAllDelegate{
-	allDelegate = newAllDelegate;    
-}
-
-#pragma mark -
-#pragma mark Get Details
-
--(void)getDetailsWithDelegate:(id)delegate {
-    WebServiceRequest *request = [[WebServiceRequest alloc] initGetWithPath:[[self class] getCompletePath:self.objectId] delegate:self];
-    self.detailsRequest = request;
-    [request release];
-    self.gotDetailsDelegate = delegate;
-}
-
-#pragma mark -
-#pragma mark Refresh
-
--(void)refreshWithDelegate:(id<ModelDelegate>)delegate {
-	[self refreshWithPath:[[self class] getCompletePath:self.objectId] withDelegate:delegate withHud:YES];
-}
-
--(void)refreshWithPath:(NSString*)path withDelegate:(id<ModelDelegate>)delegate {
-	[self refreshWithPath:path withDelegate:delegate withHud:YES];
-}
-
--(void)refreshWithPath:(NSString*)path withDelegate:(id<ModelDelegate>)delegate withHud:(BOOL)displayHud {
-    WebServiceRequest *request = [[WebServiceRequest alloc] initGetWithPath:path delegate:self];
-    self.refreshRequest = request;
-    [request release];
-    self.refreshDelegate = delegate;
-}
-
-#pragma mark -
-#pragma mark Helpers
-
-+(NSString*) getCompletePath:(NSNumber*)objectId{
-    if (objectId) {
-        return  [NSString stringWithFormat:@"%@/%@.json",[self getPath],objectId];
+    if ([relationArray isKindOfClass:[NSMutableArray class]]) {
+        [relationArray addObject:object];
     } else {
-        return [NSString stringWithFormat:@"%@.json",[self getPath]];
+        NSLog(@"[%@] Warning: object %@ not pushed into relation %@", [[self class] description], object, relation);
     }
-}
-
-#pragma mark -
-#pragma mark JSON Delegate Methods
-
-+ (void) jsonDidFinishLoading:(NSDictionary*)json jsonRequest:(WebServiceRequest*)request {
-    if (request == allRequest) {
-        [allRequest release], allRequest = nil;
-
-    		if ([json isKindOfClass:[NSDictionary class]] && [json valueForKey:@"error"]) {
-    			NSLog(@"[Model] Error getting all objects. Response is: %@", json);
-    			return;
-    		}
-		
-        NSMutableArray *array = [[NSMutableArray alloc] init];
-        for (NSDictionary *attributes in json) {
-            Model *object = [[self alloc] initWithJson:attributes];
-            [array addObject:object];
-            [object release];
-        }
-        
-        if (allDelegate!=nil) {
-            [allDelegate all:[self class] objects:[array autorelease]];
-        } else {
-            [array release];
-        }
-    }
-
-	if (request == firstRequest) {
-		[firstRequest release], firstRequest = nil;
-
-		if ([json isKindOfClass:[NSDictionary class]] && [json valueForKey:@"error"]) {
-			NSLog(@"[Model] Error getting all objects. Response is: %@", json);
-			return;
-		}
-
-		Model *object = [[self alloc] initWithJson:json];
-		if (firstDelegate!=nil) {
-			[firstDelegate first:[object autorelease]];
-		} else {
-			[object release];
-		}
-	}
-}
-
-+ (void) jsonDidFailWithError:(NSError*)error jsonRequest:(WebServiceRequest*)request {
-    if (request==allRequest)
-        [allRequest release], allRequest = nil;
-    NSLog(@"[Model] Request failed with error %@", error);
-}
-
-- (void) jsonDidFinishLoading:(NSDictionary*)json jsonRequest:(WebServiceRequest*)request {
-    if (request == detailsRequest){
-        [self addDetailsWithJson:json];
-
-		if ([json isKindOfClass:[NSDictionary class]] && [json valueForKey:@"error"]) {
-			if ([[json valueForKey:@"error"] isEqualToString:@"not_authenticated"]) {
-        // Do something ?
-			}
-			NSLog(@"[Model] Error getting all objects. Response is: %@", json);
-			return;
-		}
-		
-        if (gotDetailsDelegate!=nil)
-            [gotDetailsDelegate modelGotDetails:self];
-    }
-
-	if (request == refreshRequest) {
-		[self updateModelWithJson:json];
-
-		if ([json isKindOfClass:[NSDictionary class]] && [json valueForKey:@"error"]) {
-			if ([[json valueForKey:@"error"] isEqualToString:@"not_authenticated"]) {
-        // Do something ?
-			}
-			NSLog(@"[Model] Error getting all objects. Response is: %@", json);
-			return;
-		}		
-		
-		if (refreshDelegate!=nil)
-			[refreshDelegate modelUpdated:self];
-	}
-	
-}
-
-- (void) jsonDidFailWithError:(NSError*)error jsonRequest:(WebServiceRequest*)request {
-    NSLog(@"[Model] JSON failed with error %@", error);
-}
-
-
--(void)dealloc{
-    if (detailsRequest!=nil) { detailsRequest.delegate = nil; }
-    [detailsRequest release], detailsRequest = nil;
     
-    if (refreshRequest!=nil) { refreshRequest.delegate = nil; }
-    [refreshRequest release], refreshRequest = nil;
-	
-    [objectId release], objectId = nil;
-    [super dealloc];
+    [[[self class] sharedClient] postPath:[self fetchManyRelationPath:relation]
+                              parameters:_attributes
+                                 success:^(AFHTTPRequestOperation *operation, id responseObject) {
+#ifdef DEBUG_MODEL
+                                     NSLog(@"[%@] < POST response: %@", [[self class] description], responseObject);
+#endif
+                                     if ([responseObject isKindOfClass:[NSDictionary class]]) {
+                                         [object updateAttributes:(NSDictionary*)responseObject];
+                                     }
+                                     
+                                     success();
+                                 }
+                                 failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+#ifdef DEBUG_MODEL
+                                     NSLog(@"[%@] < POST Failure status code %d, response: %@", [[self class] description], [operation.response statusCode], operation.responseString);
+#endif
+                                     // Unprocessable Entity - The object has validation errors
+                                     if ([operation.response statusCode]==422) {
+                                         if ([operation isKindOfClass:[AFJSONRequestOperation class]]) {
+                                             AFJSONRequestOperation *jsonOperation = (AFJSONRequestOperation*)operation;
+                                             NSDictionary *errorResponse = jsonOperation.responseJSON;
+                                             if ([errorResponse isKindOfClass:[NSDictionary class]]) {
+                                                 errors = [errorResponse valueForKey:@"errors"];
+                                             }
+                                         }
+                                     }
+                                     failure(error);
+                                 }];
+
+}
+
+#pragma mark - State
+
+-(BOOL) persistent {
+    return (_id!=nil);
+}
+
+#pragma mark - Errors
+
+-(NSDictionary*) errors {
+    return errors;
+}
+
+-(BOOL) hasErrors {
+    return ([[errors allKeys] count]>0);
+}
+
+-(NSString*) errorMessage {
+    if (![self hasErrors]) { return nil; }
+    NSMutableArray *messages = [NSMutableArray array];
+    
+    for (NSString *key in [self.errors allKeys]) {
+        NSObject *_errors = [self.errors objectForKey:key];
+        NSString *message;
+        if ([_errors isKindOfClass:[NSArray class]]) {
+            message = [(NSArray*)_errors componentsJoinedByString:@", "];
+        }
+        if ([_errors isKindOfClass:[NSString class]]) {
+            message = (NSString*)_errors;
+        }
+
+        if ([key isEqualToString:@"base"]) {
+            [messages addObject:message];
+        } else {
+            [messages addObject:[NSString stringWithFormat:@"%@ %@", [key capitalizedString], message]];
+        }
+    }
+    
+    return [messages componentsJoinedByString:@", "];
+}
+
+#pragma mark - Misc.
+
+-(Model*) duplicate {
+    Model* newObject = [[[self class] alloc] init];
+    [newObject updateAttributes:[self attributes]];
+    return newObject;
+}
+
+#pragma mark - Rendering
+
+-(void) render:(UIViewController*)viewController {
+    NSArray *fields = [[self class] fields];
+
+    for (NSString *field in fields) {
+        NSString *selectorString = [NSString stringWithFormat:@"%@Label", field];
+        if ([viewController respondsToSelector:NSSelectorFromString(selectorString)]) {
+            UILabel *label = [viewController valueForKey:selectorString];
+            label.text = [self valueForKey:field];
+        }
+    }
+}
+
+-(void) fillForm:(UIViewController*)viewController {
+    NSArray *fields = [[self class] fields];
+    
+    for (NSString *field in fields) {
+        NSString *selectorString = [NSString stringWithFormat:@"%@Field", field];
+        if ([viewController respondsToSelector:NSSelectorFromString(selectorString)]) {
+            UITextField *textfield = [viewController valueForKey:selectorString];
+            textfield.text = [self valueForKey:field];
+        }
+    }
+}
+
+-(Model*) updateFromForm:(UIViewController*)viewController {
+    Model *objectToUpdate = [self duplicate];
+    NSArray *fields = [[self class] fields];
+    for (NSString *field in fields) {
+        NSString *selectorString = [NSString stringWithFormat:@"%@Field", field];
+        if ([viewController respondsToSelector:NSSelectorFromString(selectorString)]) {
+            UITextField *textfield = [viewController valueForKey:selectorString];
+            [objectToUpdate setValue:textfield.text forKey:field];
+        }
+    }
+    return objectToUpdate;
+}
+
+#pragma mark - Private methods
+
++(NSString*) indexPath {
+    return [NSString stringWithFormat:@"/%@", [self pluralizedName]];
+}
+
++(NSString*) createPath {
+    return [self indexPath];
+}
+
+-(NSString*) path {
+    return [NSString stringWithFormat:@"/%@/%@", [[self class] pluralizedName], self.id];
+}
+
+-(NSString*) fetchManyRelationPath:(NSString*)relation {
+    return [NSString stringWithFormat:@"%@/%@", [self path], relation];
+}
+
++(Class) classForManyRelation:(NSString*)relation {
+    NSString *singular = [relation classify];
+    return NSClassFromString(singular);
+}
+
++(NSString*) pluralizedName {
+    return [[self singularName] pluralize];
+}
+
++(NSString*) singularName {
+    return [[[self description] underscore] lowercaseString];
+}
+
+-(NSDictionary*) attributes {
+    NSMutableDictionary *attributes = [NSMutableDictionary dictionary];
+    
+    if ([self persistent]) {
+        [attributes setObject:self.id forKey:@"id"];
+    }
+    
+    unsigned int outCount, i;
+    objc_property_t *properties = class_copyPropertyList([self class], &outCount);
+    for (i = 0; i < outCount; i++) {    
+        objc_property_t property = properties[i];
+        const char *propName = property_getName(property);
+        if(propName) {
+            const char *propType = getPropertyType(property);
+            NSString *propertyName = [NSString stringWithUTF8String:propName];
+            NSString *propertyType = [NSString stringWithUTF8String:propType];
+            
+            if ([propertyType isEqualToString:@"NSString"] && [self valueForKey:propertyName]) {
+                [attributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
+            }
+            
+            if ([propertyType isEqualToString:@"NSMutableArray"] && [self valueForKey:propertyName]) {
+                NSMutableArray *keys = [NSMutableArray array];
+                for (Model *object in [self valueForKey:propertyName]) {
+                    if ([object isKindOfClass:[Model class]] && [object persistent]) {
+                        [keys addObject:object.id];
+                    }
+                }
+                if ([keys count]>0) {
+                    [attributes setObject:keys forKey:[NSString stringWithFormat:@"%@_ids", [[propertyName underscore] singularize]]];
+                }
+            }
+            
+            if ([propertyType isEqualToString:@"NSDate"] && [self valueForKey:propertyName]) {
+                NSDate *date = (NSDate*)[self valueForKey:propertyName];
+                if ([date isKindOfClass:[NSDate class]]) {
+                    [attributes setObject:[date jsonString] forKey:[propertyName underscore]];
+                }
+            }
+
+            if ([propertyType isEqualToString:@"NSNumber"] && [self valueForKey:propertyName]) {
+                [attributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
+            }
+
+            // TODO: Add support for other types - like what?
+        }
+    }
+    free(properties);
+    
+    return [NSDictionary dictionaryWithDictionary:attributes];
+}
+
+-(BOOL) isEqualTo:(Model*)object {
+    if ((![self.id isKindOfClass:[NSString class]]) || (![object.id isKindOfClass:[NSString class]])) {
+        return NO;
+    }
+    return ([object isKindOfClass:[self class]] && [self.id isEqualToString:object.id]);
+}
+
+// Get property type for a given property
+static const char * getPropertyType(objc_property_t property) {
+    const char *attributes = property_getAttributes(property);
+    char buffer[1 + strlen(attributes)];
+    strcpy(buffer, attributes);
+    char *state = buffer, *attribute;
+    while ((attribute = strsep(&state, ",")) != NULL) {
+        if (attribute[0] == 'T' && attribute[1] != '@') {
+            // it's a C primitive type:
+            /*
+             if you want a list of what will be returned for these primitives, search online for
+             "objective-c" "Property Attribute Description Examples"
+             apple docs list plenty of examples of what you get for int "i", long "l", unsigned "I", struct, etc.
+             */
+            return (const char *)[[NSData dataWithBytes:(attribute + 1) length:strlen(attribute) - 1] bytes];
+        }
+        else if (attribute[0] == 'T' && attribute[1] == '@' && strlen(attribute) == 2) {
+            // it's an ObjC id type:
+            return "id";
+        }
+        else if (attribute[0] == 'T' && attribute[1] == '@') {
+            // it's another ObjC object type:
+            return (const char *)[[NSData dataWithBytes:(attribute + 3) length:strlen(attribute) - 4] bytes];
+        }
+    }
+    return "";
+}
+
++(NSArray*) fields {
+    NSMutableArray *fields = [NSMutableArray arrayWithObject:@"id"];
+    
+    unsigned int outCount, i;
+    objc_property_t *properties = class_copyPropertyList([self class], &outCount);
+    for (i = 0; i < outCount; i++) {
+        objc_property_t property = properties[i];
+        const char *propName = property_getName(property);
+        if(propName) {
+            [fields addObject:[NSString stringWithUTF8String:propName]];
+        }
+    }
+    free(properties);
+    
+    return [NSArray arrayWithArray:fields];
+}
+
+-(void) updateAttributes:(NSDictionary*)attributes {
+    NSArray *fields = [[self class] fields];
+    for (NSString *key in [attributes allKeys]) {
+        
+        if ([key isEqualToString:@"_id"] || [key isEqualToString:@"id"]) {
+            self.id = [attributes valueForKey:key];
+        } else {        
+            NSString *camelCasedKey = [key camelizeWithLowerFirstLetter];
+#ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
+            BOOL assigned = NO;
+#endif
+            for (NSString *field in fields) {
+                if ([field isEqualToString:camelCasedKey]) {
+                    [self setValue:[attributes valueForKey:key] forKey:field];
+#ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
+                    assigned = YES;
+#endif
+                }
+            }
+#ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
+            if (!assigned) {
+                NSLog(@"[%@] ! Unassigned attribute %@ - %@ - value: %@", [[self class] description], key, camelCasedKey, [attributes valueForKey:key]);
+            }
+#endif
+        }
+    }
 }
 
 @end

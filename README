@@ -1,5 +1,5 @@
 iORM
 
-Very basic ORM / Web Service Request helper meant to be used with a REST JSON web service (perfect for Rails).
+Very basic ORM meant to be used with a REST JSON web service (perfect for Rails).
 
-Requires the JSON framework: http://code.google.com/p/json-framework/
+Requires AFNetworking, includes a copy of NSString+Inflections (http://github.com/adamelliot/) and RegexKitLite (http://regexkit.sourceforge.net/).

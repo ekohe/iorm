@@ -1,69 +1,63 @@
 //
 //  Model.h
+//  iORM
 //
-//  Created by Pawel Maverick Stoklosa III on 10/14/10.
-//  Copyright 2010 ekohe. All rights reserved.
+//  Created by Maxime Guilbot on 7/12/12.
+//  Copyright (c) 2012 Ekohe. All rights reserved.
 //
 
 #import <Foundation/Foundation.h>
-#import "WebServiceRequest.h"
+#import "AFHTTPClient.h"
 
 @class Model;
 
-@protocol ModelDelegate
-@optional
--(void) all:(Class)klass objects:(NSArray*)objects;
--(void) first:(Model*)model;
--(void) modelGotDetails:(Model*)model;
--(void) modelUpdated:(Model*)model;
-@end
-
-
-@interface Model : NSObject <JSONRequestDelegate> {
-    NSNumber *objectId;
-    WebServiceRequest *detailsRequest;
-    id<ModelDelegate> gotDetailsDelegate;
-    WebServiceRequest *refreshRequest;
-	id<ModelDelegate> refreshDelegate;
+@interface Model : NSObject {
+    NSDictionary *errors;
 }
 
-@property (nonatomic,retain) WebServiceRequest *detailsRequest;
-@property (nonatomic,retain) NSNumber *objectId;
-@property (nonatomic,assign) id<ModelDelegate> gotDetailsDelegate;
-@property (nonatomic,retain) WebServiceRequest *refreshRequest;
-@property (nonatomic,assign) id<ModelDelegate> refreshDelegate;
+@property (nonatomic, strong) NSString *id;
 
--(id) initWithJson:(NSDictionary*)json;
--(void) addDetailsWithJson:(NSDictionary*)json;
--(void) updateModelWithJson:(NSDictionary*)json;
-+(NSString*) getPath;
++ (AFHTTPClient*)sharedClient;
 
-// Finders
-+(void)getAllFromPath:(NSString*)path delegate:(id)delegate;
-+(void)getAllFromPath:(NSString*)path delegate:(id)delegate withHud:(BOOL)displayHud;
-+(void)getAllFromPath:(NSString*)path withParameters:(NSDictionary*)params delegate:(id)delegate;
-+(void)getAllFromPath:(NSString*)path withParameters:(NSDictionary*)params delegate:(id)delegate withHud:(BOOL)displayHud;
+// Class methods
++(void) all:(void (^)(NSArray* objects))success failure:(void (^)(NSError* error))failure;
++(void) allWithParameters:(NSDictionary*)parameters success:(void (^)(NSArray* objects))success failure:(void (^)(NSError* error))failure;
 
-+(void)getAllWithParameters:(NSDictionary*)params delegate:(id)delegate withHud:(BOOL)displayHud;
-+(void)getAllWithParameters:(NSDictionary*)params delegate:(id)delegate;
-+(void)getAllWithDelegate:(id)delegate withHud:(BOOL)displayHud;
-+(void)getAllWithDelegate:(id)delegate;
+// Instance Requests
+-(void) create:(void (^)(void))success failure:(void (^)(void))failure;
+-(void) postTo:(NSString*)path success:(void (^)(void))success failure:(void (^)(void))failure;
+-(void) postTo:(NSString*)path attributes:(NSDictionary*)attributes success:(void (^)(void))success failure:(void (^)(void))failure;
 
-+(void)cancelAll;
 
-+(void)firstWithId:(int)objectId withDelegate:(id)delegate;
-+(void)firstWithPath:(NSString*)path withDelegate:(id)delegate;
-+(void)cancelFirst;
+-(void) save:(void (^)(void))success failure:(void (^)(NSError* error))failure;
+-(void) destroy:(void (^)(void))success failure:(void (^)(NSError* error))failure;
 
-+(id)firstDelegate;
-+(void)setFirstDelegate:(id<ModelDelegate>)newFirstDelegate;
-+(id)allDelegate;
-+(void)setAllDelegate:(id<ModelDelegate>)newAllDelegate;
+// Has many
+-(void) fetchMany:(NSString*)relation success:(void (^)(void))success failure:(void (^)(NSError* error))failure;
+-(void) push:(Model*)object to:(NSString*)relation success:(void (^)(void))success failure:(void (^)(NSError* error))failure;
 
--(void)getDetailsWithDelegate:(id<ModelDelegate>)delegate;
+// Path
+-(NSString*) path;
 
-// Refresh
--(void)refreshWithDelegate:(id<ModelDelegate>)delegate;
--(void)refreshWithPath:(NSString*)path withDelegate:(id<ModelDelegate>)delegate;
--(void)refreshWithPath:(NSString*)path withDelegate:(id<ModelDelegate>)delegate withHud:(BOOL)displayHud;
+// State
+-(BOOL) persistent;
+
+// Attributes
+-(void) updateAttributes:(NSDictionary*)attributes;
+-(NSDictionary*) attributes;
+-(BOOL) isEqualTo:(Model*)object;
+
+// Errors
+-(NSDictionary*) errors;
+-(BOOL) hasErrors;
+-(NSString*) errorMessage;
+
+// Misc.
+-(Model*) duplicate;
+
+// Rendering
+-(void) render:(UIViewController*)viewController;
+-(void) fillForm:(UIViewController*)viewController;
+-(Model*) updateFromForm:(UIViewController*)viewController;
+
 @end
