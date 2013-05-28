@@ -3,3 +3,5 @@ iORM
 Very basic ORM / Web Service Request helper meant to be used with a REST JSON web service (perfect for Rails).
 
 Requires the JSON framework: http://code.google.com/p/json-framework/
+
+UPDATE: Checkout the remake branch, a complete remake based on AFNetworking and blocks.
