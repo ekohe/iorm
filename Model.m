@@ -29,11 +29,15 @@ static NSString *authorizationToken = nil;
 +(NSString*) pluralizedName;
 +(NSString*) singularName;
 +(NSArray*) fields;
++(NSArray*) singularRelations;
 
 +(NSString*) indexPath;
 +(NSString*) createPath;
 -(NSString*) fetchManyRelationPath:(NSString*)relation;
+-(NSString*) fetchRelationPath:(NSString*)relation;
 +(Class) classForManyRelation:(NSString*)relation;
++(Class) classForRelation:(NSString*)relation;
+-(Class) getFieldClass:(NSString*)field;
 @end
 
 @implementation Model
@@ -218,7 +222,7 @@ static NSString *authorizationToken = nil;
 -(void) fetchMany:(NSString*)relation success:(void (^)(void))success failure:(void (^)(NSError* error))failure {
     if (![self persistent]) { failure(nil); return;}  // TODO: create a NSError object
     
-    [[[self class] sharedClient] getPath:[self fetchManyRelationPath:relation]
+    [[[self class] sharedClient] getPath:[self fetchRelationPath:relation]
                       parameters:nil
                          success:^(AFHTTPRequestOperation *operation, id responseObject) {
                              if ([responseObject isKindOfClass:[NSArray class]]) {
@@ -246,6 +250,41 @@ static NSString *authorizationToken = nil;
                              failure(error);
                          }];
 
+}
+
+-(void) fetch:(NSString*)relation success:(void (^)(void))success failure:(void (^)(NSError* error))failure {
+    if (![self persistent]) { failure(nil); return;}  // TODO: create a NSError object
+    
+    NSString *relationPropertyName = [relation camelizeWithLowerFirstLetter];
+    if (![self respondsToSelector:NSSelectorFromString(relationPropertyName)]) {
+        failure(nil); // TODO: create a NSError object
+        NSLog(@"[%@] Error: couldn't find property %@ for relation %@", [[self class] description], relationPropertyName, relationPropertyName);
+        return;
+    }
+    
+    [[[self class] sharedClient] getPath:[self fetchRelationPath:relation]
+                              parameters:nil
+                                 success:^(AFHTTPRequestOperation *operation, id responseObject) {
+                                     if ([responseObject isKindOfClass:[NSDictionary class]]) {
+                                         
+                                         Class relationKlass = [[self class] classForRelation:relation];
+                                         Model *object = [[relationKlass alloc] init];
+                                         [object updateAttributes:(NSDictionary*)responseObject];
+                                         
+                                         [self setValue:object forKey:relationPropertyName];
+                                         
+                                         success();
+                                     } else if (responseObject==nil) {
+                                         // There is no object for the relation
+                                         [self setValue:nil forKey:relationPropertyName];
+                                         success();
+                                     } else {
+                                         failure(nil);  // TODO: create a NSError object
+                                     }
+                                 }
+                                 failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+                                     failure(error);
+                                 }];    
 }
 
 -(void) push:(Model*)object to:(NSString*)relation success:(void (^)(void))success failure:(void (^)(NSError* error))failure {
@@ -350,41 +389,175 @@ static NSString *authorizationToken = nil;
 
 #pragma mark - Rendering
 
--(void) render:(UIViewController*)viewController {
-    NSArray *fields = [[self class] fields];
-
-    for (NSString *field in fields) {
-        NSString *selectorString = [NSString stringWithFormat:@"%@Label", field];
+-(void) hide:(UIViewController*)viewController prefix:(NSString*)prefix {    
+    for (NSString *field in [[self class] fields]) {
+        NSString *selectorString;
+        if (prefix) {
+            selectorString = [NSString stringWithFormat:@"%@_%@Label", prefix, field];
+        } else {
+            selectorString = [NSString stringWithFormat:@"%@Label", field];
+        }
+        
         if ([viewController respondsToSelector:NSSelectorFromString(selectorString)]) {
             UILabel *label = [viewController valueForKey:selectorString];
-            label.text = [self valueForKey:field];
+            label.hidden = YES;
+        }
+    }
+    
+    for (NSString *relation in [[self class] singularRelations]) {
+        Model *relationObject = (Model*)[self valueForKey:relation];
+        if (relationObject) {
+            NSString *newPrefix;
+            if (prefix) {
+                newPrefix = [NSString stringWithFormat:@"%@_%@", prefix, relation];
+            } else {
+                newPrefix = relation;
+            }
+            [relationObject render:viewController prefix:newPrefix];
+        }
+    }
+}
+
+-(void) hide:(UIViewController*)viewController {
+    [self hide:viewController prefix:nil];
+}
+
+-(void) render:(UIViewController*)viewController prefix:(NSString*)prefix {    
+    for (NSString *field in [[self class] fields]) {
+        NSString *selectorString;
+        if (prefix) {
+            selectorString = [NSString stringWithFormat:@"%@_%@Label", prefix, field];
+        } else {
+            selectorString = [NSString stringWithFormat:@"%@Label", field];
+        }
+
+        if ([viewController respondsToSelector:NSSelectorFromString(selectorString)]) {
+            UILabel *label = [viewController valueForKey:selectorString];
+            label.text = [NSString stringWithFormat:@"%@", [self valueForKey:field]];
+            label.hidden = NO;
+        }
+    }
+    
+    for (NSString *relation in [[self class] singularRelations]) {
+        Model *relationObject = (Model*)[self valueForKey:relation];
+        if (relationObject) {
+            NSString *newPrefix;
+            if (prefix) {
+                newPrefix = [NSString stringWithFormat:@"%@_%@", prefix, relation];
+            } else {
+                newPrefix = relation;
+            }
+            [relationObject render:viewController prefix:newPrefix];
+        }
+    }
+}
+
+-(void) render:(UIViewController*)viewController {
+    [self render:viewController prefix:nil];
+}
+
+-(void) fillForm:(UIViewController*)viewController prefix:(NSString*)prefix {
+    NSArray *fields = [[self class] fields];
+    
+    for (NSString *field in fields) {
+        NSString *selectorString;
+        if (prefix) {
+            selectorString = [NSString stringWithFormat:@"%@_%@Field", prefix, field];
+        } else {
+            selectorString = [NSString stringWithFormat:@"%@Field", field];
+        }
+        if ([viewController respondsToSelector:NSSelectorFromString(selectorString)]) {
+            UITextField *textfield = [viewController valueForKey:selectorString];
+            if ([self valueForKey:field]) {
+                textfield.text = [NSString stringWithFormat:@"%@", [self valueForKey:field]];
+            }
+        }
+    }
+    
+    for (NSString *relation in [[self class] singularRelations]) {
+        Model *relationObject = (Model*)[self valueForKey:relation];
+        if (relationObject) {
+            NSString *newPrefix;
+            if (prefix) {
+                newPrefix = [NSString stringWithFormat:@"%@_%@", prefix, relation];
+            } else {
+                newPrefix = relation;
+            }
+            [relationObject fillForm:viewController prefix:newPrefix];
         }
     }
 }
 
 -(void) fillForm:(UIViewController*)viewController {
-    NSArray *fields = [[self class] fields];
-    
-    for (NSString *field in fields) {
-        NSString *selectorString = [NSString stringWithFormat:@"%@Field", field];
-        if ([viewController respondsToSelector:NSSelectorFromString(selectorString)]) {
-            UITextField *textfield = [viewController valueForKey:selectorString];
-            textfield.text = [self valueForKey:field];
-        }
-    }
+    [self fillForm:viewController prefix:nil];
 }
 
--(Model*) updateFromForm:(UIViewController*)viewController {
+-(void) setValueFromControl:(NSObject*)control forField:(NSString*)field {
+    
+    if ([control isKindOfClass:[UITextField class]]) {
+        UITextField *textfield = (UITextField*)control;
+        NSString *stringValue = textfield.text;
+        Class fieldClass = [self getFieldClass:field];
+        if (fieldClass == [NSString class]) {
+            [self setValue:stringValue forKey:field];
+            return;
+        }
+        if (fieldClass == [NSNumber class]) {
+            // Assuming double type here..
+            [self setValue:[NSNumber numberWithDouble:[stringValue doubleValue]] forKey:field];
+            return;
+        }
+        NSLog(@"[%@] Warning: field class %@ not supported for field %@", [[self class] description], fieldClass, field);
+    }
+
+    NSLog(@"[%@] Warning: control %@ not supported for field %@", [[self class] description], control, field);
+
+    // TODO: support more types and controls
+}
+
+-(Model*) updateFromForm:(UIViewController*)viewController prefix:(NSString*)prefix {
     Model *objectToUpdate = [self duplicate];
     NSArray *fields = [[self class] fields];
     for (NSString *field in fields) {
-        NSString *selectorString = [NSString stringWithFormat:@"%@Field", field];
+        NSString *selectorString;
+        if (prefix) {
+            selectorString = [NSString stringWithFormat:@"%@_%@Field", prefix, field];
+        } else {
+            selectorString = [NSString stringWithFormat:@"%@Field", field];
+        }
         if ([viewController respondsToSelector:NSSelectorFromString(selectorString)]) {
-            UITextField *textfield = [viewController valueForKey:selectorString];
-            [objectToUpdate setValue:textfield.text forKey:field];
+            NSObject *control = [viewController valueForKey:selectorString];
+            [objectToUpdate setValueFromControl:control forField:field];
         }
     }
+    
+    for (NSString *relation in [[self class] singularRelations]) {
+        Model *relationObject = (Model*)[self valueForKey:relation];
+        Class relationKlass = [[self class] classForRelation:[relation underscore]];
+        NSString *newPrefix;
+        if (prefix) {
+            newPrefix = [NSString stringWithFormat:@"%@_%@", prefix, relation];
+        } else {
+            newPrefix = relation;
+        }
+        if (relationObject==nil) {
+            relationObject = [[relationKlass alloc] init];
+            relationObject = [relationObject updateFromForm:viewController prefix:newPrefix];
+            if ([[[relationObject attributes] allKeys] count]>0) {
+                // only set newly created object if it got assigned attributes
+                [objectToUpdate setValue:relationObject forKey:relation];
+            }
+        } else {
+            relationObject = [relationObject updateFromForm:viewController prefix:newPrefix];
+            [objectToUpdate setValue:relationObject forKey:relation];
+        }
+    }
+    
     return objectToUpdate;
+}
+
+-(Model*) updateFromForm:(UIViewController*)viewController {
+    return [self updateFromForm:viewController prefix:nil];
 }
 
 #pragma mark - Private methods
@@ -401,13 +574,18 @@ static NSString *authorizationToken = nil;
     return [NSString stringWithFormat:@"/%@/%@", [[self class] pluralizedName], self.id];
 }
 
--(NSString*) fetchManyRelationPath:(NSString*)relation {
+-(NSString*) fetchRelationPath:(NSString*)relation {
     return [NSString stringWithFormat:@"%@/%@", [self path], relation];
 }
 
 +(Class) classForManyRelation:(NSString*)relation {
     NSString *singular = [relation classify];
     return NSClassFromString(singular);
+}
+
++(Class) classForRelation:(NSString*)relation {
+    // consider grouping with classForManyRelation ?
+    return NSClassFromString([relation classify]);
 }
 
 +(NSString*) pluralizedName {
@@ -418,25 +596,24 @@ static NSString *authorizationToken = nil;
     return [[[self description] underscore] lowercaseString];
 }
 
--(NSDictionary*) attributes {
-    NSMutableDictionary *attributes = [NSMutableDictionary dictionary];
+-(NSDictionary*) attributesWithPrefix:(NSString*)prefix withinAttributes:(NSMutableDictionary*)attributes {
+    NSMutableDictionary *objectAttributes = [NSMutableDictionary dictionary];
     
     if ([self persistent]) {
-        [attributes setObject:self.id forKey:@"id"];
+        [objectAttributes setObject:self.id forKey:@"id"];
     }
     
     unsigned int outCount, i;
     objc_property_t *properties = class_copyPropertyList([self class], &outCount);
-    for (i = 0; i < outCount; i++) {    
+    for (i = 0; i < outCount; i++) {
         objc_property_t property = properties[i];
         const char *propName = property_getName(property);
         if(propName) {
             const char *propType = getPropertyType(property);
             NSString *propertyName = [NSString stringWithUTF8String:propName];
             NSString *propertyType = [NSString stringWithUTF8String:propType];
-            
             if ([propertyType isEqualToString:@"NSString"] && [self valueForKey:propertyName]) {
-                [attributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
+                [objectAttributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
             }
             
             if ([propertyType isEqualToString:@"NSMutableArray"] && [self valueForKey:propertyName]) {
@@ -447,27 +624,44 @@ static NSString *authorizationToken = nil;
                     }
                 }
                 if ([keys count]>0) {
-                    [attributes setObject:keys forKey:[NSString stringWithFormat:@"%@_ids", [[propertyName underscore] singularize]]];
+                    [objectAttributes setObject:keys forKey:[NSString stringWithFormat:@"%@_ids", [[propertyName underscore] singularize]]];
                 }
             }
             
             if ([propertyType isEqualToString:@"NSDate"] && [self valueForKey:propertyName]) {
                 NSDate *date = (NSDate*)[self valueForKey:propertyName];
                 if ([date isKindOfClass:[NSDate class]]) {
-                    [attributes setObject:[date jsonString] forKey:[propertyName underscore]];
+                    [objectAttributes setObject:[date jsonString] forKey:[propertyName underscore]];
                 }
             }
-
+            
             if ([propertyType isEqualToString:@"NSNumber"] && [self valueForKey:propertyName]) {
-                [attributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
+                [objectAttributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
             }
-
+            
+            if ([NSClassFromString(propertyType) isSubclassOfClass:[Model class]]) {
+                Model *relationObject = (Model*)[self valueForKey:propertyName];
+                if (relationObject) {
+                    objectAttributes = [NSMutableDictionary dictionaryWithDictionary:[relationObject attributesWithPrefix:[propertyName underscore] withinAttributes:objectAttributes]];
+                }
+            }
+            
             // TODO: Add support for other types - like what?
         }
     }
     free(properties);
     
+    if ((attributes) && (prefix) && ([[objectAttributes allKeys] count]>0)) {
+        [attributes setValue:objectAttributes forKey:prefix];
+    } else {
+        attributes = objectAttributes;
+    }
+    
     return [NSDictionary dictionaryWithDictionary:attributes];
+}
+
+-(NSDictionary*) attributes {
+    return [self attributesWithPrefix:nil withinAttributes:nil];
 }
 
 -(BOOL) isEqualTo:(Model*)object {
@@ -505,6 +699,24 @@ static const char * getPropertyType(objc_property_t property) {
     return "";
 }
 
+// Get property type for a given field name
+-(Class) getFieldClass:(NSString*)field {
+    unsigned int outCount, i;
+    objc_property_t *properties = class_copyPropertyList([self class], &outCount);
+    for (i = 0; i < outCount; i++) {
+        objc_property_t property = properties[i];
+        const char *propName = property_getName(property);
+        NSString *propertyName = [NSString stringWithUTF8String:propName];
+        if([propertyName isEqualToString:field]) {
+            const char *propType = getPropertyType(property);
+            NSString *propertyType = [NSString stringWithUTF8String:propType];
+            return NSClassFromString(propertyType);
+        }
+    }
+    free(properties);
+    return nil;
+}
+
 +(NSArray*) fields {
     NSMutableArray *fields = [NSMutableArray arrayWithObject:@"id"];
     
@@ -513,13 +725,39 @@ static const char * getPropertyType(objc_property_t property) {
     for (i = 0; i < outCount; i++) {
         objc_property_t property = properties[i];
         const char *propName = property_getName(property);
+        const char *propType = getPropertyType(property);
+        NSString *propertyType = [NSString stringWithUTF8String:propType];
         if(propName) {
-            [fields addObject:[NSString stringWithUTF8String:propName]];
+            if (![NSClassFromString(propertyType) isSubclassOfClass:[Model class]]) {
+                [fields addObject:[NSString stringWithUTF8String:propName]];
+            }
         }
     }
     free(properties);
     
     return [NSArray arrayWithArray:fields];
+}
+
++(NSArray*) singularRelations {
+    NSMutableArray *relations = [NSMutableArray array];
+    
+    unsigned int outCount, i;
+    objc_property_t *properties = class_copyPropertyList([self class], &outCount);
+    for (i = 0; i < outCount; i++) {
+        objc_property_t property = properties[i];
+        const char *propName = property_getName(property);
+        const char *propType = getPropertyType(property);
+        NSString *propertyType = [NSString stringWithUTF8String:propType];
+
+        if(propName) {
+            if ([NSClassFromString(propertyType) isSubclassOfClass:[Model class]]) {
+                [relations addObject:[NSString stringWithUTF8String:propName]];
+            }
+        }
+    }
+    free(properties);
+    
+    return [NSArray arrayWithArray:relations];
 }
 
 -(void) updateAttributes:(NSDictionary*)attributes {
@@ -541,6 +779,18 @@ static const char * getPropertyType(objc_property_t property) {
 #endif
                 }
             }
+            
+            NSArray *relations = [[self class] singularRelations];
+            for (NSString *relation in relations) {
+                if ([relation isEqualToString:camelCasedKey]) {
+                    Class relationKlass = [[self class] classForRelation:[relation underscore]];
+                    Model *relationObject = [[relationKlass alloc] init];
+                    [relationObject updateAttributes:[attributes valueForKey:key]];
+                    [self setValue:relationObject forKey:relation];
+                    assigned = YES;
+                }
+            }
+            
 #ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
             if (!assigned) {
                 NSLog(@"[%@] ! Unassigned attribute %@ - %@ - value: %@", [[self class] description], key, camelCasedKey, [attributes valueForKey:key]);

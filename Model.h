@@ -37,6 +37,9 @@
 -(void) fetchMany:(NSString*)relation success:(void (^)(void))success failure:(void (^)(NSError* error))failure;
 -(void) push:(Model*)object to:(NSString*)relation success:(void (^)(void))success failure:(void (^)(NSError* error))failure;
 
+// Has one
+-(void) fetch:(NSString*)relation success:(void (^)(void))success failure:(void (^)(NSError* error))failure;
+
 // Path
 -(NSString*) path;
 
@@ -58,6 +61,7 @@
 
 // Rendering
 -(void) render:(UIViewController*)viewController;
+-(void) hide:(UIViewController*)viewController;
 -(void) fillForm:(UIViewController*)viewController;
 -(Model*) updateFromForm:(UIViewController*)viewController;
 
