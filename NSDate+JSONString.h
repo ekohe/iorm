@@ -9,6 +9,10 @@
 #import <Foundation/Foundation.h>
 
 @interface NSDate (JSONString)
+
+@property (nonatomic, assign) BOOL dateOnly;
+
 +(NSDate*) dateFromJSON:(NSString*)JSONdate;
 -(NSString*) jsonString;
+
 @end

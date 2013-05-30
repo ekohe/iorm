@@ -37,7 +37,7 @@ static NSString *authorizationToken = nil;
 -(NSString*) fetchRelationPath:(NSString*)relation;
 +(Class) classForManyRelation:(NSString*)relation;
 +(Class) classForRelation:(NSString*)relation;
--(Class) getFieldClass:(NSString*)field;
++(Class) getFieldClass:(NSString*)field;
 @end
 
 @implementation Model
@@ -469,7 +469,12 @@ static NSString *authorizationToken = nil;
         if ([viewController respondsToSelector:NSSelectorFromString(selectorString)]) {
             UITextField *textfield = [viewController valueForKey:selectorString];
             if ([self valueForKey:field]) {
-                textfield.text = [NSString stringWithFormat:@"%@", [self valueForKey:field]];
+                NSLog(@"value field %@ - %@", [self valueForKey:field], [[self valueForKey:field] class]);
+                if ([[self valueForKey:field] isKindOfClass:[NSDate class]]) {
+                    textfield.text = [(NSDate*)[self valueForKey:field] jsonString];
+                } else {
+                    textfield.text = [NSString stringWithFormat:@"%@", [self valueForKey:field]];
+                }
             }
         }
     }
@@ -497,7 +502,7 @@ static NSString *authorizationToken = nil;
     if ([control isKindOfClass:[UITextField class]]) {
         UITextField *textfield = (UITextField*)control;
         NSString *stringValue = textfield.text;
-        Class fieldClass = [self getFieldClass:field];
+        Class fieldClass = [[self class] getFieldClass:field];
         if (fieldClass == [NSString class]) {
             [self setValue:stringValue forKey:field];
             return;
@@ -507,7 +512,13 @@ static NSString *authorizationToken = nil;
             [self setValue:[NSNumber numberWithDouble:[stringValue doubleValue]] forKey:field];
             return;
         }
+        if (fieldClass == [NSDate class]) {
+            NSDate *date = [NSDate dateFromJSON:stringValue];
+            [self setValue:date forKey:field];
+            return;
+        }
         NSLog(@"[%@] Warning: field class %@ not supported for field %@", [[self class] description], fieldClass, field);
+        return;
     }
 
     NSLog(@"[%@] Warning: control %@ not supported for field %@", [[self class] description], control, field);
@@ -585,6 +596,7 @@ static NSString *authorizationToken = nil;
 
 +(Class) classForRelation:(NSString*)relation {
     // consider grouping with classForManyRelation ?
+    // should we get the type of the property instead ? like getFieldClass?
     return NSClassFromString([relation classify]);
 }
 
@@ -700,7 +712,7 @@ static const char * getPropertyType(objc_property_t property) {
 }
 
 // Get property type for a given field name
--(Class) getFieldClass:(NSString*)field {
++(Class) getFieldClass:(NSString*)field {
     unsigned int outCount, i;
     objc_property_t *properties = class_copyPropertyList([self class], &outCount);
     for (i = 0; i < outCount; i++) {
@@ -773,10 +785,21 @@ static const char * getPropertyType(objc_property_t property) {
 #endif
             for (NSString *field in fields) {
                 if ([field isEqualToString:camelCasedKey]) {
-                    [self setValue:[attributes valueForKey:key] forKey:field];
+                    
+                    Class fieldClass = [[self class] getFieldClass:field];
+                    if ((fieldClass == [NSString class]) || (fieldClass == [NSNumber class])) {
+                        [self setValue:[attributes valueForKey:key] forKey:field];
 #ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
-                    assigned = YES;
+                        assigned = YES;
 #endif
+                    }
+                    if (fieldClass == [NSDate class]) {
+                        NSDate *date = [NSDate dateFromJSON:[attributes valueForKey:key]];
+                        [self setValue:date forKey:field];
+#ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
+                        assigned = YES;
+#endif
+                    }
                 }
             }
             
