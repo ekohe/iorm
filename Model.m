@@ -505,6 +505,9 @@ static NSString *authorizationToken = nil;
         Class fieldClass = [[self class] getFieldClass:field];
         if (fieldClass == [NSString class]) {
             [self setValue:stringValue forKey:field];
+#ifdef DEBUG
+            NSLog(@"[%@] > Set %@ to \"%@\"", [[self class] description], stringValue, field);
+#endif
             return;
         }
         if (fieldClass == [NSNumber class]) {
@@ -624,10 +627,10 @@ static NSString *authorizationToken = nil;
             const char *propType = getPropertyType(property);
             NSString *propertyName = [NSString stringWithUTF8String:propName];
             NSString *propertyType = [NSString stringWithUTF8String:propType];
+            if ([self valueForKey:propertyName]==[NSNull null]) { continue; }
             if ([propertyType isEqualToString:@"NSString"] && [self valueForKey:propertyName]) {
                 [objectAttributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
             }
-            
             if ([propertyType isEqualToString:@"NSMutableArray"] && [self valueForKey:propertyName]) {
                 NSMutableArray *keys = [NSMutableArray array];
                 for (Model *object in [self valueForKey:propertyName]) {
@@ -658,7 +661,7 @@ static NSString *authorizationToken = nil;
                 }
             }
             
-            // TODO: Add support for other types - like what?
+            // TODO: Add support for other types
         }
     }
     free(properties);

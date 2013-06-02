@@ -29,7 +29,6 @@
 -(void) postTo:(NSString*)path success:(void (^)(void))success failure:(void (^)(void))failure;
 -(void) postTo:(NSString*)path attributes:(NSDictionary*)attributes success:(void (^)(void))success failure:(void (^)(void))failure;
 
-
 -(void) save:(void (^)(void))success failure:(void (^)(NSError* error))failure;
 -(void) destroy:(void (^)(void))success failure:(void (^)(NSError* error))failure;
 
