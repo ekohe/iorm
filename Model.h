@@ -21,6 +21,9 @@
 + (void) setAuthorizationToken:(NSString*)authorizationToken;
 
 // Class methods
++(void) find:(NSString*)id success:(void (^)(Model* object))success failure:(void (^)(NSError* error))failure;
++(void) findWithURI:(NSString*)uri success:(void (^)(Model* object))success failure:(void (^)(NSError* error))failure;
+
 +(void) all:(void (^)(NSArray* objects))success failure:(void (^)(NSError* error))failure;
 +(void) allWithParameters:(NSDictionary*)parameters success:(void (^)(NSArray* objects))success failure:(void (^)(NSError* error))failure;
 

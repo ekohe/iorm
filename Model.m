@@ -80,6 +80,30 @@ static NSString *authorizationToken = nil;
     authorizationToken = _authorizationToken;
 }
 
++(void) find:(NSString*)id success:(void (^)(Model* object))success failure:(void (^)(NSError* error))failure {
+    Model *object = [[self alloc] init];
+    object.id = id;
+    [self findWithURI:[object path] success:success failure:failure];
+}
+
++(void) findWithURI:(NSString*)uri success:(void (^)(Model* object))success failure:(void (^)(NSError* error))failure {
+    [[self sharedClient] getPath:uri
+                      parameters:nil
+                         success:^(AFHTTPRequestOperation *operation, id responseObject) {
+                             if ([responseObject isKindOfClass:[NSDictionary class]]) {
+                                 NSDictionary *objectAttributes = (NSDictionary*)responseObject;
+                                 
+                                 Model *object = [[self alloc] init];
+                                 [object updateAttributes:objectAttributes];                                 
+                                 success(object);
+                             }
+                         }
+                         failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+                             failure(error);
+                         }];
+}
+
+
 
 +(void) all:(void (^)(NSArray* objects))success failure:(void (^)(NSError* error))failure {
     [self allWithParameters:nil success:success failure:failure];
