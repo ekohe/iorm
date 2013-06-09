@@ -799,6 +799,28 @@ static const char * getPropertyType(objc_property_t property) {
     return [NSArray arrayWithArray:relations];
 }
 
++ (NSArray *)pluralRelations {
+    NSMutableArray *relations = [NSMutableArray array];
+ 
+    unsigned int outCount, i;
+    objc_property_t *properties = class_copyPropertyList([self class], &outCount);
+    for (i = 0; i < outCount; i++) {
+        objc_property_t property = properties[i];
+        NSString *propName = [NSString stringWithUTF8String:property_getName(property)];
+        const char *propType = getPropertyType(property);
+        NSString *propertyType = [NSString stringWithUTF8String:propType];
+        
+        if(propName) {
+            if ([NSClassFromString([[propName underscore] classify]) isSubclassOfClass:[Model class]] && [propertyType isEqualToString:@"NSArray"]) {
+                [relations addObject:propName];
+            }
+        }
+    }
+    free(properties);
+    
+    return [NSArray arrayWithArray:relations];
+}
+
 -(void) updateAttributes:(NSDictionary*)attributes {
     NSArray *fields = [[self class] fields];
     for (NSString *key in [attributes allKeys]) {
@@ -830,13 +852,32 @@ static const char * getPropertyType(objc_property_t property) {
                 }
             }
             
-            NSArray *relations = [[self class] singularRelations];
-            for (NSString *relation in relations) {
+            NSArray *singularRelations = [[self class] singularRelations];
+            for (NSString *relation in singularRelations) {
                 if ([relation isEqualToString:camelCasedKey]) {
                     Class relationKlass = [[self class] classForRelation:[relation underscore]];
                     Model *relationObject = [[relationKlass alloc] init];
                     [relationObject updateAttributes:[attributes valueForKey:key]];
                     [self setValue:relationObject forKey:relation];
+                    assigned = YES;
+                }
+            }
+            
+            NSArray *pluralRelations = [[self class] pluralRelations];
+            for (NSString *relation in pluralRelations) {
+                
+                if ([relation isEqualToString:camelCasedKey] && [[attributes objectForKey:key] isKindOfClass:[NSArray class]]) {
+                    NSArray *dataArray = [attributes objectForKey:key];
+                    NSMutableArray *objectArray = [NSMutableArray array];
+                    
+                    for (NSDictionary *attribs in dataArray) {
+                        Class relationKlass = [[self class] classForRelation:[[relation underscore] singularize]];
+                        Model *relationObject = [[relationKlass alloc] init];
+                        [relationObject updateAttributes:attribs];
+                        [objectArray addObject:relationObject];
+                    }
+                    
+                    [self setValue:[NSArray arrayWithArray:objectArray] forKey:relation];
                     assigned = YES;
                 }
             }
