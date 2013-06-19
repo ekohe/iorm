@@ -457,7 +457,12 @@ static NSString *authorizationToken = nil;
 
         if ([viewController respondsToSelector:NSSelectorFromString(selectorString)]) {
             UILabel *label = [viewController valueForKey:selectorString];
-            label.text = [NSString stringWithFormat:@"%@", [self valueForKey:field]];
+            NSObject *value = [self valueForKey:field];
+            if ((value) && (value != (NSObject*)[NSNull null])) {
+                label.text = [NSString stringWithFormat:@"%@", value];
+            } else {
+                label.text = @"";
+            }
             label.hidden = NO;
         }
     }
