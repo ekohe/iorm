@@ -737,7 +737,10 @@ static const char * getPropertyType(objc_property_t property) {
         }
         else if (attribute[0] == 'T' && attribute[1] == '@') {
             // it's another ObjC object type:
-            return (const char *)[[NSData dataWithBytes:(attribute + 3) length:strlen(attribute) - 4] bytes];
+            NSString *attributeString = [NSString stringWithUTF8String:attribute];
+            attributeString = [attributeString substringFromIndex:3];
+            attributeString = [attributeString substringToIndex:attributeString.length - 1];
+            return [attributeString UTF8String];
         }
     }
     return "";
