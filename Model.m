@@ -78,6 +78,7 @@ static NSString *authorizationToken = nil;
 
 + (void) setAuthorizationToken:(NSString*)_authorizationToken {
     authorizationToken = _authorizationToken;
+    [[self sharedClient] setAuthorizationHeaderWithToken:authorizationToken];
 }
 
 +(void) find:(NSString*)id success:(void (^)(Model* object))success failure:(void (^)(NSError* error))failure {
@@ -94,7 +95,7 @@ static NSString *authorizationToken = nil;
                                  NSDictionary *objectAttributes = (NSDictionary*)responseObject;
                                  
                                  Model *object = [[self alloc] init];
-                                 [object updateAttributes:objectAttributes];                                 
+                                 [object updateAttributes:objectAttributes];
                                  success(object);
                              }
                          }
@@ -294,7 +295,7 @@ static NSString *authorizationToken = nil;
                                          Class relationKlass = [[self class] classForRelation:relation];
                                          Model *object = [[relationKlass alloc] init];
                                          [object updateAttributes:(NSDictionary*)responseObject];
-                                         
+
                                          [self setValue:object forKey:relationPropertyName];
                                          
                                          success();
@@ -307,6 +308,9 @@ static NSString *authorizationToken = nil;
                                      }
                                  }
                                  failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+#ifdef DEBUG_MODEL
+                                     NSLog(@"[%@] < GET Fetch Failure status code %d, response: %@", [[self class] description], [operation.response statusCode], operation.responseString);
+#endif
                                      failure(error);
                                  }];    
 }
@@ -332,7 +336,7 @@ static NSString *authorizationToken = nil;
         NSLog(@"[%@] Warning: object %@ not pushed into relation %@", [[self class] description], object, relation);
     }
     
-    [[[self class] sharedClient] postPath:[self fetchManyRelationPath:relation]
+    [[[self class] sharedClient] postPath:[self fetchRelationPath:relation]
                               parameters:_attributes
                                  success:^(AFHTTPRequestOperation *operation, id responseObject) {
 #ifdef DEBUG_MODEL
@@ -640,9 +644,9 @@ static NSString *authorizationToken = nil;
     return [[[self description] underscore] lowercaseString];
 }
 
--(NSDictionary*) attributesWithPrefix:(NSString*)prefix withinAttributes:(NSMutableDictionary*)attributes {
+-(NSDictionary*) attributesWithPrefix:(NSString*)prefix withinAttributes:(NSMutableDictionary*)attributes excluding:(NSArray*)excluding{
     NSMutableDictionary *objectAttributes = [NSMutableDictionary dictionary];
-    
+
     if ([self persistent]) {
         [objectAttributes setObject:self.id forKey:@"id"];
     }
@@ -653,41 +657,46 @@ static NSString *authorizationToken = nil;
         objc_property_t property = properties[i];
         const char *propName = property_getName(property);
         if(propName) {
-            const char *propType = getPropertyType(property);
-            NSString *propertyName = [NSString stringWithUTF8String:propName];
-            NSString *propertyType = [NSString stringWithUTF8String:propType];
-            if ([self valueForKey:propertyName]==[NSNull null]) { continue; }
-            if ([propertyType isEqualToString:@"NSString"] && [self valueForKey:propertyName]) {
-                [objectAttributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
-            }
-            if ([propertyType isEqualToString:@"NSMutableArray"] && [self valueForKey:propertyName]) {
-                NSMutableArray *keys = [NSMutableArray array];
-                for (Model *object in [self valueForKey:propertyName]) {
-                    if ([object isKindOfClass:[Model class]] && [object persistent]) {
-                        [keys addObject:object.id];
+            if (excluding != nil && excluding.count > 0 && [excluding containsObject:[NSString stringWithUTF8String:propName]]){
+            } else{
+                const char *propType = getPropertyType(property);
+                NSString *propertyName = [NSString stringWithUTF8String:propName];
+                NSString *propertyType = [NSString stringWithUTF8String:propType];
+                if ([self valueForKey:propertyName]==[NSNull null]) { continue; }
+                if ([propertyType isEqualToString:@"NSString"] && [self valueForKey:propertyName]) {
+                    [objectAttributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
+                }
+                if ([propertyType isEqualToString:@"NSMutableArray"] && [self valueForKey:propertyName]) {
+                    NSMutableArray *keys = [NSMutableArray array];
+                    for (Model *object in [self valueForKey:propertyName]) {
+                        if ([object isKindOfClass:[Model class]] && [object persistent]) {
+                            [keys addObject:object.id];
+                        }
+                    }
+                    if ([keys count]>0) {
+                        [objectAttributes setObject:keys forKey:[NSString stringWithFormat:@"%@_ids", [[propertyName underscore] singularize]]];
                     }
                 }
-                if ([keys count]>0) {
-                    [objectAttributes setObject:keys forKey:[NSString stringWithFormat:@"%@_ids", [[propertyName underscore] singularize]]];
+                
+                if ([propertyType isEqualToString:@"NSDate"] && [self valueForKey:propertyName]) {
+                    NSDate *date = (NSDate*)[self valueForKey:propertyName];
+                    if ([date isKindOfClass:[NSDate class]]) {
+                        [objectAttributes setObject:[date jsonString] forKey:[propertyName underscore]];
+                    }
                 }
-            }
-            
-            if ([propertyType isEqualToString:@"NSDate"] && [self valueForKey:propertyName]) {
-                NSDate *date = (NSDate*)[self valueForKey:propertyName];
-                if ([date isKindOfClass:[NSDate class]]) {
-                    [objectAttributes setObject:[date jsonString] forKey:[propertyName underscore]];
+                
+                if ([propertyType isEqualToString:@"NSNumber"] && [self valueForKey:propertyName]) {
+                    [objectAttributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
                 }
-            }
-            
-            if ([propertyType isEqualToString:@"NSNumber"] && [self valueForKey:propertyName]) {
-                [objectAttributes setObject:[self valueForKey:propertyName] forKey:[propertyName underscore]];
-            }
-            
-            if ([NSClassFromString(propertyType) isSubclassOfClass:[Model class]]) {
-                Model *relationObject = (Model*)[self valueForKey:propertyName];
-                if (relationObject) {
-                    objectAttributes = [NSMutableDictionary dictionaryWithDictionary:[relationObject attributesWithPrefix:[propertyName underscore] withinAttributes:objectAttributes]];
+                
+                
+                if ([NSClassFromString(propertyType) isSubclassOfClass:[Model class]]) {
+                    Model *relationObject = (Model*)[self valueForKey:propertyName];
+                    if (relationObject) {
+                        objectAttributes = [NSMutableDictionary dictionaryWithDictionary:[relationObject attributesWithPrefix:[propertyName underscore] withinAttributes:objectAttributes excluding:excluding]];
+                    }
                 }
+
             }
             
             // TODO: Add support for other types
@@ -705,7 +714,11 @@ static NSString *authorizationToken = nil;
 }
 
 -(NSDictionary*) attributes {
-    return [self attributesWithPrefix:nil withinAttributes:nil];
+    return [self attributesWithPrefix:nil withinAttributes:nil excluding:nil];
+}
+
+-(NSDictionary*) attributesExcluding:(NSArray *)excludedAttributes{
+    return [self attributesWithPrefix:nil withinAttributes:nil excluding:excludedAttributes];
 }
 
 -(BOOL) isEqualTo:(Model*)object {
@@ -831,70 +844,74 @@ static const char * getPropertyType(objc_property_t property) {
 
 -(void) updateAttributes:(NSDictionary*)attributes {
     NSArray *fields = [[self class] fields];
-    for (NSString *key in [attributes allKeys]) {
-        
-        if ([key isEqualToString:@"_id"] || [key isEqualToString:@"id"]) {
-            self.id = [attributes valueForKey:key];
-        } else {        
-            NSString *camelCasedKey = [key camelizeWithLowerFirstLetter];
-#ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
-            BOOL assigned = NO;
-#endif
-            for (NSString *field in fields) {
-                if ([field isEqualToString:camelCasedKey]) {
-                    
-                    Class fieldClass = [[self class] getFieldClass:field];
-                    if ((fieldClass == [NSString class]) || (fieldClass == [NSNumber class])) {
-                        [self setValue:[attributes valueForKey:key] forKey:field];
-#ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
-                        assigned = YES;
-#endif
-                    }
-                    if (fieldClass == [NSDate class]) {
-                        NSDate *date = [NSDate dateFromJSON:[attributes valueForKey:key]];
-                        [self setValue:date forKey:field];
-#ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
-                        assigned = YES;
-#endif
+    if (attributes != [NSNull null]){
+        for (NSString *key in [attributes allKeys]) {
+            if ([key isEqualToString:@"_id"] || [key isEqualToString:@"id"]) {
+                self.id = [attributes valueForKey:key];
+            } else {        
+                NSString *camelCasedKey = [key camelizeWithLowerFirstLetter];
+    #ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
+                BOOL assigned = NO;
+    #endif
+                for (NSString *field in fields) {
+                    if ([field isEqualToString:camelCasedKey]) {
+                        
+                        Class fieldClass = [[self class] getFieldClass:field];
+                        if ((fieldClass == [NSString class]) || (fieldClass == [NSNumber class])) {
+                            [self setValue:[attributes valueForKey:key] forKey:field];
+    #ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
+                            assigned = YES;
+    #endif
+                        }
+                        if (fieldClass == [NSDate class]) {
+                            NSDate *date = [NSDate dateFromJSON:[attributes valueForKey:key]];
+                            [self setValue:date forKey:field];
+    #ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
+                            assigned = YES;
+    #endif
+                        }
                     }
                 }
-            }
-            
-            NSArray *singularRelations = [[self class] singularRelations];
-            for (NSString *relation in singularRelations) {
-                if ([relation isEqualToString:camelCasedKey]) {
-                    Class relationKlass = [[self class] classForRelation:[relation underscore]];
-                    Model *relationObject = [[relationKlass alloc] init];
-                    [relationObject updateAttributes:[attributes valueForKey:key]];
-                    [self setValue:relationObject forKey:relation];
-                    assigned = YES;
-                }
-            }
-            
-            NSArray *pluralRelations = [[self class] pluralRelations];
-            for (NSString *relation in pluralRelations) {
                 
-                if ([relation isEqualToString:camelCasedKey] && [[attributes objectForKey:key] isKindOfClass:[NSArray class]]) {
-                    NSArray *dataArray = [attributes objectForKey:key];
-                    NSMutableArray *objectArray = [NSMutableArray array];
-                    
-                    for (NSDictionary *attribs in dataArray) {
-                        Class relationKlass = [[self class] classForRelation:[[relation underscore] singularize]];
+                NSArray *singularRelations = [[self class] singularRelations];
+                for (NSString *relation in singularRelations) {
+                    if ([relation isEqualToString:camelCasedKey]) {
+                        Class relationKlass = [[self class] classForRelation:[relation underscore]];
                         Model *relationObject = [[relationKlass alloc] init];
-                        [relationObject updateAttributes:attribs];
-                        [objectArray addObject:relationObject];
+                        NSLog(@"[relationObject updateAttributes:[attributes valueForKey:key]];");
+                        NSLog(@"key:%@",key);
+                        [relationObject updateAttributes:[attributes valueForKey:key]];
+                        [self setValue:relationObject forKey:relation];
+                        assigned = YES;
                     }
-                    
-                    [self setValue:[NSArray arrayWithArray:objectArray] forKey:relation];
-                    assigned = YES;
                 }
+                
+                NSArray *pluralRelations = [[self class] pluralRelations];
+                for (NSString *relation in pluralRelations) {
+                    
+                    if ([relation isEqualToString:camelCasedKey] && [[attributes objectForKey:key] isKindOfClass:[NSArray class]]) {
+                        NSArray *dataArray = [attributes objectForKey:key];
+                        NSMutableArray *objectArray = [NSMutableArray array];
+                        
+                        for (NSDictionary *attribs in dataArray) {
+                            Class relationKlass = [[self class] classForRelation:[[relation underscore] singularize]];
+                            Model *relationObject = [[relationKlass alloc] init];
+                            NSLog(@"[relationObject updateAttributes:attribs];");
+                            [relationObject updateAttributes:attribs];
+                            [objectArray addObject:relationObject];
+                        }
+                        
+                        [self setValue:[NSArray arrayWithArray:objectArray] forKey:relation];
+                        assigned = YES;
+                    }
+                }
+                
+    #ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
+                if (!assigned) {
+                    NSLog(@"[%@] ! Unassigned attribute %@ - %@ - value: %@", [[self class] description], key, camelCasedKey, [attributes valueForKey:key]);
+                }
+    #endif
             }
-            
-#ifdef DEBUG_MODEL_UNASSIGNED_ATTRIBUTES
-            if (!assigned) {
-                NSLog(@"[%@] ! Unassigned attribute %@ - %@ - value: %@", [[self class] description], key, camelCasedKey, [attributes valueForKey:key]);
-            }
-#endif
         }
     }
 }

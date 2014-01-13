@@ -51,6 +51,7 @@
 // Attributes
 -(void) updateAttributes:(NSDictionary*)attributes;
 -(NSDictionary*) attributes;
+-(NSDictionary*) attributesExcluding:(NSArray *)excludedAttributes;
 -(BOOL) isEqualTo:(Model*)object;
 
 // Errors
