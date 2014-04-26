@@ -10,7 +10,7 @@
 
 @interface NSDate (JSONString)
 
-@property (nonatomic, assign) BOOL dateOnly;
+//@property (nonatomic, assign) BOOL dateOnly;
 
 +(NSDate*) dateFromJSON:(NSString*)JSONdate;
 -(NSString*) jsonString;

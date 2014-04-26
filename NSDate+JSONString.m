@@ -7,21 +7,21 @@
 //
 
 #import "NSDate+JSONString.h"
-#import <objc/runtime.h>
+//#import <objc/runtime.h>
 
-static char const * const dateOnlyKey = "dateOnlyKey";
+//static char const * const dateOnlyKey = "dateOnlyKey";
 
 @implementation NSDate (JSONString)
 
-@dynamic dateOnly;
-
-- (BOOL)dateOnly {
-    return [objc_getAssociatedObject(self, dateOnlyKey) boolValue];
-}
-
-- (void)setDateOnly:(BOOL)dateOnly {
-    objc_setAssociatedObject(self, dateOnlyKey, [NSNumber numberWithBool:dateOnly], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-}
+//@dynamic dateOnly;
+//
+//- (BOOL)dateOnly {
+//    return [objc_getAssociatedObject(self, dateOnlyKey) boolValue];
+//}
+//
+//- (void)setDateOnly:(BOOL)dateOnly {
+//    objc_setAssociatedObject(self, dateOnlyKey, [NSNumber numberWithBool:dateOnly], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+//}
 
 +(NSDate*) dateFromJSON:(NSString*)JSONdate {
     if (JSONdate == (NSString*)[NSNull null]) {
@@ -32,22 +32,22 @@ static char const * const dateOnlyKey = "dateOnlyKey";
     if ([JSONdate length]==10) {
         [df setDateFormat:@"yyyy-MM-dd"];
         date = [df dateFromString:JSONdate];
-        date.dateOnly = YES;
+//        date.dateOnly = YES;
     } else {
         [df setDateFormat:@"yyyy-MM-dd HH:mm:ssZZZZ"];
         date = [df dateFromString:[[JSONdate stringByReplacingOccurrencesOfString:@"T" withString:@" "] stringByReplacingOccurrencesOfString:@"Z" withString:@"+0000"]];
-        date.dateOnly = NO;
+//        date.dateOnly = NO;
     }
     return date;
 }
 
 -(NSString*) jsonString {
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
-    if (self.dateOnly) {
-        [df setDateFormat:@"yyyy-MM-dd"];
-    } else {
+//    if (self.dateOnly) {
+//        [df setDateFormat:@"yyyy-MM-dd"];
+//    } else {
         [df setDateFormat:@"yyyy-MM-dd HH:mm:ssZZZZ"];
-    }
+//    }
     NSString *jsonString = [df stringFromDate:self];
     return jsonString;
 }
