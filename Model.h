@@ -12,7 +12,7 @@
 
 @class Model;
 
-@interface Model : NSObject {
+@interface Model : NSObject <NSCoding>{
     NSDictionary *errors;
 }
 
@@ -67,5 +67,8 @@
 -(void) hide:(UIViewController*)viewController;
 -(void) fillForm:(UIViewController*)viewController;
 -(Model*) updateFromForm:(UIViewController*)viewController;
+
+-(instancetype)initWithCoder:(NSCoder *)aDecoder;
+-(void)encodeWithCoder:(NSCoder *)aCoder;
 
 @end

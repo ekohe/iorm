@@ -45,7 +45,7 @@ static NSString *authorizationToken = nil;
 -(id) init {
     self = [super init];
     if (self) {
-        _id = nil;
+        _id= nil;
     }
     return self;
 }
@@ -80,9 +80,9 @@ static NSString *authorizationToken = nil;
     authorizationToken = _authorizationToken;
 }
 
-+(void) find:(NSString*)id success:(void (^)(Model* object))success failure:(void (^)(NSError* error))failure {
++(void) find:(NSString*)_id success:(void (^)(Model* object))success failure:(void (^)(NSError* error))failure {
     Model *object = [[self alloc] init];
-    object.id = id;
+    object.id = _id;
     [self findWithURI:[object path] success:success failure:failure];
 }
 
@@ -897,6 +897,17 @@ static const char * getPropertyType(objc_property_t property) {
 #endif
         }
     }
+}
+
+-(void)encodeWithCoder:(NSCoder *)aCoder {
+    [aCoder encodeObject:self.id forKey:@"_id"];
+}
+
+-(instancetype)initWithCoder:(NSCoder *)aDecoder {
+    if (self = [self init]) {
+        self.id = [aDecoder decodeObjectForKey:@"_id"];
+    }
+    return self;
 }
 
 @end
