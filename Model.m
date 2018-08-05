@@ -1,7 +1,7 @@
 //
 //  Model.m
 //
-//  Created by Pawel Maverick Stoklosa III on 10/14/10.
+//  Created by Maverick on 10/14/10.
 //  Copyright 2010 ekohe. All rights reserved.
 //
 
